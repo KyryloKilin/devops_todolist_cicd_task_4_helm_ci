@@ -58,11 +58,39 @@ jobs:
           path: |
             src
             helm-charts
+            
+  docker-ci:
+    needs: python-ci
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref_name == 'develop'
+
+    steps:
+      - name: Download workflow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: workflow-artifacts
+  
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+  
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+  
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./src
+          file: ./src/Dockerfile
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DockerImageName }}:${{ github.sha }}
 
   helm-ci:
     needs: python-ci
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref_name == 'your_name'
+    if: github.event_name == 'push' && github.ref_name == 'develop'
 
     steps:
       - name: Download workflow artifacts
@@ -77,7 +105,7 @@ jobs:
 
       - name: Helm template
         run: |
-          helm template todoapp ./helm-charts/todoapp/values.yaml
+          helm template todoapp ./helm-charts/todoapp/
 
       - name: Helm lint
         run: |
