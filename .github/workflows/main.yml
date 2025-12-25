@@ -1,15 +1,16 @@
 name: python-deployment
 
-run-name: ${{ github.actor }} - ${{ github.ref_name }} - ${{ github.sha }}
+run-name: ${{ github.actor }} - ${{ github.ref_name}} -${{ github.sha }}
 
 on:
   push:
-    branches: ["your_name"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
 
 env:
-  PythonVersion: "3.8"
+  PythonVersion: 3.8
+  DockerImageName: todoapp
 
 jobs:
   python-ci:
@@ -17,13 +18,12 @@ jobs:
     defaults:
       run:
         working-directory: ./src
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Python ${{ env.PythonVersion }}
+        uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PythonVersion }}
 
@@ -42,82 +42,76 @@ jobs:
           coverage run --source='.' manage.py test
           coverage report
 
-      - name: Linting (non-blocking)
+      - name: Linting
         run: |
           flake8 . --show-source --statistics --exit-zero
 
-      - name: Check Complexity (non-blocking)
+      - name: Check Complexity
         run: |
           flake8 . --exit-zero --max-complexity=6
 
-      - name: Upload workflow artifacts (src + helm-charts)
-        if: github.event_name == 'push' && github.ref_name == 'develop'
+      - name: Upload python artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: workflow-artifacts
-          path: |
-            src
-            helm-charts
-            
-  docker-ci:
-    needs: python-ci
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref_name == 'develop'
+          name: python-artifacts
+          path: .
 
+      - name: Upload helm artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-artifacts
+          path: ${{ github.workspace }}/helm-charts
+
+  docker-ci:
+    runs-on: ubuntu-latest
+    if: ${{ github.ref_name == 'main' }}
+    needs: python-ci
     steps:
-      - name: Download workflow artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: workflow-artifacts
-  
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-  
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-  
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: ./src
-          file: ./src/Dockerfile
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DockerImageName }}:${{ github.sha }}
+
+    - uses: actions/download-artifact@v4
+      name: Download python artifacts
+      with:
+        name: python-artifacts
+        path: .
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and push
+      uses: docker/build-push-action@v5
+      with:
+        push: true
+        context: ./src
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.DockerImageName }}:${{ github.sha }}
 
   helm-ci:
-    needs: python-ci
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref_name == 'develop'
+    needs: ["python-ci"]
 
     steps:
-      - name: Download workflow artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: workflow-artifacts
+     - uses: actions/download-artifact@v4
+       name: Download helm artifacts
+       with:
+         name: helm-artifacts
+         path: .
 
-      - name: Setup Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.14.0
+     - name: Set Up Helm
+       uses: azure/setup-helm@v4.2.0
 
-      - name: Helm template
-        run: |
-          helm template todoapp ./helm-charts/todoapp/
+     - name: Template Helm
+       run: helm template todoapp ./todoapp/ -f ./todoapp/values.yaml
 
-      - name: Helm lint
-        run: |
-          helm lint ./helm-charts/todoapp
+     - name: Lint Helm
+       run: helm lint ./todoapp/
 
-      - name: Package chart
-        run: |
-          mkdir -p packaged
-          helm package ./helm-charts/todoapp -d packaged
+     - name: Package Helm
+       run: helm package ./todoapp/
 
-      - name: Upload chart package
-        uses: actions/upload-artifact@v4
-        with:
-          name: helm-chart-package
-          path: packaged/*.tgz
+     - name: Upload Helm artifacts
+       uses: actions/upload-artifact@v4
+       with:
+         name: helm-package
+         path: ./*.tgz
